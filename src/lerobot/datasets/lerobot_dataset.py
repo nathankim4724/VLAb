@@ -1306,11 +1306,13 @@ class MultiLeRobotDatasetCleaner:
 
         self.cleaned_datasets = consistent_datasets
         self.keep_mask = keep_mask
-        self.cleaned_weights = [sampling_weights[i] for i in range(len(valid_fps_datasets)) if keep_mask[i]]
-        self.cleaned_repo_ids = [repo_ids[i] for i in range(len(valid_fps_datasets)) if keep_mask[i]]
-        self.cleaned_datasets_repo_ids = [
-            datasets_repo_ids[i] for i in range(len(valid_fps_datasets)) if keep_mask[i]
-        ]
+        # Take names and weights from the surviving datasets themselves. `keep_mask` is relative to
+        # `valid_fps_datasets`, and `repo_ids` also contains datasets that failed to load, so indexing
+        # the original lists with it paired names with the wrong datasets.
+        weight_by_repo_id = dict(zip(datasets_repo_ids, sampling_weights, strict=True))
+        self.cleaned_datasets_repo_ids = [ds.repo_id for ds in consistent_datasets]
+        self.cleaned_repo_ids = list(self.cleaned_datasets_repo_ids)
+        self.cleaned_weights = [weight_by_repo_id[repo_id] for repo_id in self.cleaned_datasets_repo_ids]
 
         self.cumulative_sizes = np.array(
             [0] + list(torch.cumsum(torch.tensor([len(d) for d in consistent_datasets]), dim=0))

@@ -39,12 +39,16 @@ def keep_datasets_with_valid_fps(ls_datasets: list, min_fps: int = 1, max_fps: i
     print(
         f"Keeping datasets with fps between {min_fps} and {max_fps}. Considering {len(ls_datasets)} datasets."
     )
+    # Build a new list: removing from `ls_datasets` while iterating over it skipped the dataset after
+    # each removed one, so adjacent invalid datasets survived.
+    kept = []
     for ds in ls_datasets:
-        if ds.fps < min_fps or ds.fps > max_fps:
-            print(f"Dataset {ds} has invalid fps: {ds.fps}. Removing it.")
-            ls_datasets.remove(ds)
-    print(f"Keeping {len(ls_datasets)} datasets with valid fps.")
-    return ls_datasets
+        if min_fps <= ds.fps <= max_fps:
+            kept.append(ds)
+        else:
+            print(f"Dataset {ds.repo_id} has invalid fps: {ds.fps}. Removing it.")
+    print(f"Keeping {len(kept)} datasets with valid fps.")
+    return kept
 
 
 def keep_datasets_with_the_same_features_per_robot_type(ls_datasets: list) -> list:
