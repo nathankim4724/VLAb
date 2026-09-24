@@ -227,14 +227,17 @@ def train(cfg: TrainPipelineConfig):
         shuffle = True
         sampler = None
     
-    keys_to_max_dim = getattr(dataset.meta, "keys_to_max_dim", {})
+    # Camera frames are resized per sample to the policy's input size (paper: 512x512) instead of being
+    # padded to a fixed 1080x1920 canvas, which shrank 480x640 frames to ~128x171 inside the model input.
     keys_to_max_dim = {
-    "action": (32,),
-    "observation.state": (32,),
-    "observation.images.image": (3, 1080, 1920),
-    "observation.images.image2": (3, 1080, 1920),
-}
-    collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
+        "action": (32,),
+        "observation.state": (32,),
+    }
+    collate_fn = partial(
+        multidataset_collate_fn,
+        keys_to_max_dim=keys_to_max_dim,
+        resize_images_to=getattr(cfg.policy, "resize_imgs_with_padding", None),
+    )
     dataloader = torch.utils.data.DataLoader(
         dataset,
         collate_fn=collate_fn,

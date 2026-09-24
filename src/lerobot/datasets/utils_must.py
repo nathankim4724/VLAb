@@ -403,15 +403,46 @@ def pad_tensor_to_shape(tensor: torch.Tensor, target_shape: tuple, pad_value: fl
     return F.pad(tensor, pad, value=pad_value)
 
 
+def resize_with_pad(img: torch.Tensor, width: int, height: int, pad_value: float = 0.0) -> torch.Tensor:
+    """Aspect-preserving bilinear resize to (height, width), padding on the top/left.
+
+    Same convention as `resize_with_pad` in policies/smolvla2/modeling_smolvla2.py, so the model's own
+    resize becomes a no-op. Accepts (..., C, H, W).
+    """
+    cur_height, cur_width = img.shape[-2:]
+    if (cur_height, cur_width) == (height, width):
+        return img
+    ratio = max(cur_width / width, cur_height / height)
+    resized_height = int(cur_height / ratio)
+    resized_width = int(cur_width / ratio)
+    flat = img.reshape(-1, *img.shape[-3:]).float()
+    resized = F.interpolate(flat, size=(resized_height, resized_width), mode="bilinear", align_corners=False)
+    padded = F.pad(resized, (width - resized_width, 0, height - resized_height, 0), value=pad_value)
+    return padded.reshape(*img.shape[:-3], *padded.shape[-3:]).to(img.dtype)
+
+
+def is_camera_key(key: str, value) -> bool:
+    return key.startswith("observation.images.") and isinstance(value, torch.Tensor) and value.ndim >= 3
+
+
 def multidataset_collate_fn(
     batch: List[Dict[str, torch.Tensor]],
     keys_to_max_dim: Dict[str, tuple] = {},
     pad_value: float = 0.0,
+    resize_images_to: tuple[int, int] | None = None,
 ) -> Dict[str, torch.Tensor]:
     """
     Pads tensors to given target shape (if provided), otherwise uses per-batch max.
     Supports 1D (e.g. action), 3D (e.g. [C,H,W] images).
+
+    If `resize_images_to` (width, height) is given, every camera frame is first resized per sample with
+    `resize_with_pad`, so frames of different resolutions are never padded to a common canvas.
     """
+    if resize_images_to is not None:
+        batch = [
+            {k: resize_with_pad(v, *resize_images_to) if is_camera_key(k, v) else v for k, v in sample.items()}
+            for sample in batch
+        ]
     collated_batch = [{} for _ in range(len(batch))]
     batch_keys = batch[0].keys()
 
