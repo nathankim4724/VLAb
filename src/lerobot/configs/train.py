@@ -54,6 +54,10 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    # Read by scripts/train.py via getattr(); without this field it was always 1 and the CLI flag was
+    # rejected. Only takes effect under `accelerate launch`. The LR scheduler steps every micro-batch, so
+    # scale steps / warmup / decay by this factor.
+    gradient_accumulation_steps: int = 1
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
