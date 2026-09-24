@@ -145,10 +145,19 @@ def train(cfg: TrainPipelineConfig):
         # Set gradient accumulation steps (default 1)
         gradient_accumulation_steps = getattr(cfg, 'gradient_accumulation_steps', 1)
         accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False, gradient_accumulation_steps=gradient_accumulation_steps, kwargs_handlers=[ddp_init_kwargs, ddp_kwargs])
+        logging.info(
+            f"accelerate: mixed_precision={accelerator.mixed_precision}, "
+            f"gradient_accumulation_steps={accelerator.gradient_accumulation_steps}, "
+            f"num_processes={accelerator.num_processes}"
+        )
         if accelerator is not None and not accelerator.is_main_process:
             # Disable duplicate logging on non-main processes
             logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
             logging.getLogger().setLevel(logging.WARNING)
+    elif getattr(cfg, "gradient_accumulation_steps", 1) > 1:
+        logging.warning(
+            "Not launched with `accelerate launch`: gradient_accumulation_steps and mixed precision are ignored."
+        )
 
     logging.info(pformat(cfg.to_dict()))
 
