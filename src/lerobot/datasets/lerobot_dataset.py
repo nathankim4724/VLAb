@@ -92,6 +92,7 @@ from lerobot.datasets.utils_must import (
     keep_datasets_with_the_same_features_per_robot_type,
     keep_datasets_with_valid_fps,
     map_dict_keys,
+    mapping_key,
     pad_tensor,
     reshape_features_to_max_dim,
 )
@@ -142,7 +143,9 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
         # added by mshukor
-        self.feature_keys_mapping = feature_keys_mapping.get(repo_id, None) if feature_keys_mapping else None
+        self.feature_keys_mapping = (
+            feature_keys_mapping.get(mapping_key(repo_id), None) if feature_keys_mapping else None
+        )
         self.inverse_feature_keys_mapping = (
             {v: k for k, v in self.feature_keys_mapping.items() if v} if self.feature_keys_mapping else {}
         )
@@ -540,7 +543,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.root.mkdir(exist_ok=True, parents=True)
 
-        self.feature_keys_mapping = feature_keys_mapping.get(repo_id, None) if feature_keys_mapping else None
+        self.feature_keys_mapping = (
+            feature_keys_mapping.get(mapping_key(repo_id), None) if feature_keys_mapping else None
+        )
         self.inverse_feature_keys_mapping = (
             {v: k for k, v in self.feature_keys_mapping.items() if v} if self.feature_keys_mapping else {}
         )
@@ -658,7 +663,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.robot_type = self.meta.info.get("robot_type", "")
         # Override tasks
-        self.meta.tasks = TASKS_KEYS_MAPPING.get(self.repo_id, self.meta.tasks)
+        self.meta.tasks = TASKS_KEYS_MAPPING.get(mapping_key(self.repo_id), self.meta.tasks)
 
     def push_to_hub(
         self,

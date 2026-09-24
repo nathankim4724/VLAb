@@ -2176,10 +2176,10 @@ tkc79/so100_lego_box_2:
   observation.images.arm: observation.image2
   observation.images.laptop: observation.image
 triton7777/so100_dataset_mix:
-  observation.images.gripper: observation.image2
+  observation.images.gripper: observation.images.image2
   observation.images.s_left: null
-  observation.images.s_right: observation.image3
-  observation.images.top: observation.image
+  observation.images.s_right: observation.images.image3
+  observation.images.top: observation.images.image
 twerdster/koch_new_training_red:
   observation.images.iphone: observation.image2
   observation.images.laptop: observation.image3

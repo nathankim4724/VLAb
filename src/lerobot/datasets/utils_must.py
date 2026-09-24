@@ -234,15 +234,36 @@ def find_start_of_motion(velocities, window_size, threshold, motion_buffer):
     return 0
 
 
+import os
+import re
+
 import requests
 import yaml
 
 
+def mapping_key(repo_id: str) -> str:
+    """Key into the smolvla-keys mappings, which use bare `user/name` ids.
+
+    The training list passes `community_dataset_vX/user/name`, so strip that prefix before lookups.
+    """
+    return re.sub(r"^community_dataset_v\d+/", "", repo_id)
+
+
+VLAB_ASSETS_DIR = os.environ.get(
+    "VLAB_ASSETS_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "smolvla-keys")
+)
+
+
 def load_yaml_mapping(name: str) -> dict:
     """
-    Loads a YAML mapping from a Hugging Face repo.
+    Loads a YAML mapping from the vendored copy in assets/smolvla-keys (or $VLAB_ASSETS_DIR).
+    Falls back to the Hugging Face repo only if the local file is missing.
     Example: name='features' → https://huggingface.co/jadechoghari/smolvla-keys/resolve/main/features.yaml
     """
+    local_path = os.path.join(VLAB_ASSETS_DIR, f"{name}.yaml")
+    if os.path.isfile(local_path):
+        with open(local_path) as f:
+            return yaml.safe_load(f)
     url = f"https://huggingface.co/jadechoghari/smolvla-keys/resolve/main/{name}.yaml"
     response = requests.get(url)
     response.raise_for_status()  # raise if the download fails
