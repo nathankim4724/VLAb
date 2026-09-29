@@ -16,10 +16,12 @@
 
 import logging
 
+import numpy as np
 from torch import nn
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
+from lerobot.datasets.compute_stats import aggregate_feature_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.datasets.utils import dataset_to_policy_features
 # from lerobot.envs.configs import EnvConfig  # Removed - not needed for SmolVLA2 pretraining
@@ -43,6 +45,27 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SmolVLA2Config(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available. Only SmolVLA2 is supported.")
+
+
+def combine_robot_type_stats(stats_by_robot_type: dict[str, dict[str, dict]]) -> dict[str, dict]:
+    """Merge per-robot-type stats into one set, count-weighted, independent of dict/set order.
+
+    Per-robot-type stats have every entry (including `count`) padded to max_action_dim/max_state_dim by
+    MultiLeRobotDatasetMeta, so only the first `count` entry is the real frame count.
+    """
+    robot_types = sorted(stats_by_robot_type)
+    features = sorted({f for rt in robot_types for f in stats_by_robot_type[rt]})
+    combined = {}
+    for feature in features:
+        per_type = []
+        for rt in robot_types:
+            if feature not in stats_by_robot_type[rt]:
+                continue
+            ft = {k: np.asarray(v) for k, v in stats_by_robot_type[rt][feature].items()}
+            ft["count"] = ft["count"].reshape(-1)[:1]
+            per_type.append(ft)
+        combined[feature] = aggregate_feature_stats(per_type)
+    return combined
 
 
 def make_policy(
@@ -82,17 +105,10 @@ def make_policy(
         robot_type = list(ds_meta.stats.keys())[0]
         kwargs["dataset_stats"] = ds_meta.stats[robot_type]
     elif ds_meta.stats and len(ds_meta.stats) > 1:
-        # Multiple robot types - aggregate statistics across all robot types
-        # This handles multidataset scenarios where each dataset has its own robot type
-        aggregated_stats = {}
-        for robot_type, stats in ds_meta.stats.items():
-            for feature_name, feature_stats in stats.items():
-                if feature_name not in aggregated_stats:
-                    aggregated_stats[feature_name] = feature_stats
-                else:
-                    # For multidataset, we need to handle the aggregation properly
-                    pass
-        kwargs["dataset_stats"] = aggregated_stats
+        # Multiple robot types - combine their stats, weighted by frame count. Upstream kept, for each
+        # feature, the stats of whichever robot type came first in set order, which also changes between
+        # processes (and so between resumed jobs, since norm stats are not restored from checkpoints).
+        kwargs["dataset_stats"] = combine_robot_type_stats(ds_meta.stats)
     else:
         kwargs["dataset_stats"] = ds_meta.stats
 
