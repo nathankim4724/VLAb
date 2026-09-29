@@ -107,7 +107,8 @@ class WandBLogger:
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
+        # `Run.url` rather than `Run.get_url()`, which wandb 0.30 removed (crashed at startup with wandb on).
+        logging.info(f"Track this run --> {colored(str(wandb.run.url), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
     def log_policy(self, checkpoint_dir: Path):
