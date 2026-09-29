@@ -265,6 +265,14 @@ def train(cfg: TrainPipelineConfig):
         policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler
         )
+        if accelerator.num_processes > 1 and cfg.seed is not None:
+            # `set_seed` (and `load_training_state` on resume) gives every rank the same torch/CUDA RNG
+            # state, so every rank drew identical flow-matching noise and timesteps: a global batch of
+            # 4 x 64 had only 64 distinct (noise, tau) draws. Offset the seed per rank, and per start step
+            # so a resumed job doesn't replay the draws of step 0. This runs after `prepare`, which seeds
+            # the shuffling sampler from the shared RNG (and re-syncs it from rank 0 every epoch), so all
+            # ranks still shard the same permutation.
+            set_seed(cfg.seed + step * accelerator.num_processes + accelerator.process_index)
     dl_iter = cycle(dataloader)
 
     policy.train()
