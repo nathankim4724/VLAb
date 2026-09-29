@@ -11,11 +11,18 @@
 # The first start snapshots the VLAb code (git HEAD, which must be clean) into the run dir, and every
 # restart runs that snapshot, so later edits or pulls in the VLAb clone don't change a running baseline.
 #
+# Set the variables below (RUN_NAME, DATASETS, STEPS, ...) in the environment in front of `sbatch`, which
+# exports them by default. Don't use `--export=ALL,VAR=...`: on csail-shared nodes that makes Slurm load
+# the login environment, and launch fails with "user_env_retrieval_failed_requeued_held".
+#
 # Full run:
 #   sbatch examples/scripts/pretrain_paper_4gpu.sbatch
 # 4-GPU smoke test (2 datasets, debug QoS):
-#   sbatch --qos=vision-pulkitag-debug --time=02:00:00 \
-#     --export=ALL,RUN_NAME=smoke4_001,DATASETS=smoke,STEPS=300,SAVE_FREQ=100,LOG_FREQ=20 \
+#   RUN_NAME=smoke4_001 DATASETS=smoke STEPS=300 SAVE_FREQ=100 LOG_FREQ=20 \
+#     sbatch --qos=vision-pulkitag-debug --time=02:00:00 examples/scripts/pretrain_paper_4gpu.sbatch
+# Same on the CSAIL-wide H200 nodes (many nodes, preemptible by other groups, 1-day limit):
+#   RUN_NAME=smoke4_003 DATASETS=smoke STEPS=300 SAVE_FREQ=100 LOG_FREQ=20 \
+#     sbatch --account=csail --partition=csail-shared-h200 --qos=lab-free --time=02:00:00 \
 #     examples/scripts/pretrain_paper_4gpu.sbatch
 #
 #SBATCH --job-name=smolvla_pretrain
