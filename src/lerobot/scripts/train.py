@@ -119,7 +119,10 @@ def update_policy(
             policy.update()
   
     train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    # With gradient accumulation, grad_norm is only computed on the micro-step that steps the optimizer;
+    # recording 0.0 on the others would crash (.item() on a float) and dilute the logged average.
+    if isinstance(grad_norm, torch.Tensor):
+        train_metrics.grad_norm = grad_norm.item()
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
