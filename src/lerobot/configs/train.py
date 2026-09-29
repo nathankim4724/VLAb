@@ -37,7 +37,9 @@ TRAIN_CONFIG_NAME = "train_config.json"
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
-    env: None = None  # Removed envs dependency for SmolVLA2 pretraining
+    # Removed envs dependency for SmolVLA2 pretraining; always None. Annotated `str | None` rather than
+    # `None` because draccus cannot decode a saved `null` into type None, which broke --resume.
+    env: str | None = None
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
