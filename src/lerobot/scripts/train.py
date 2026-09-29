@@ -46,6 +46,7 @@ from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
+    prune_checkpoints,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -328,15 +329,26 @@ def train(cfg: TrainPipelineConfig):
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            # Unwrap policy from accelerate if needed
-            unwrapped_policy = accelerator.unwrap_model(policy) if accelerator else policy
-            save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
-            update_last_checkpoint(checkpoint_dir)
-            # Log checkpoint to enabled logger
-            if wandb_logger:
-                wandb_logger.log_policy(checkpoint_dir)
-            elif trackio_logger:
-                trackio_logger.log_policy(checkpoint_dir)
+            # Only the main process writes: all ranks hold the same weights and optimizer state, and ranks
+            # writing the same directory and `last` symlink at once could leave a corrupt checkpoint.
+            if accelerator is None or accelerator.is_main_process:
+                # Unwrap policy from accelerate if needed
+                unwrapped_policy = accelerator.unwrap_model(policy) if accelerator else policy
+                save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
+                update_last_checkpoint(checkpoint_dir)
+                if cfg.keep_last_checkpoints:
+                    removed = prune_checkpoints(
+                        checkpoint_dir.parent, cfg.keep_last_checkpoints, cfg.keep_checkpoint_every
+                    )
+                    if removed:
+                        logging.info(f"Pruned checkpoints: {[p.name for p in removed]}")
+                # Log checkpoint to enabled logger
+                if wandb_logger:
+                    wandb_logger.log_policy(checkpoint_dir)
+                elif trackio_logger:
+                    trackio_logger.log_policy(checkpoint_dir)
+            if accelerator:
+                accelerator.wait_for_everyone()
 
         # Environment evaluation disabled for SmolVLA2 pretraining
         # if cfg.env and is_eval_step:

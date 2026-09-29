@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
+import shutil
 from pathlib import Path
 
 from termcolor import colored
@@ -59,40 +61,55 @@ def load_training_step(save_dir: Path) -> int:
     return training_step["step"]
 
 
+# Prefix of in-progress checkpoint writes/deletions inside the checkpoints dir. Step directories only ever
+# appear complete: they are written under this prefix and renamed into place.
+TMP_CHECKPOINT_PREFIX = ".tmp_"
+
+
 def update_last_checkpoint(checkpoint_dir: Path) -> Path:
-    import fcntl
-    import tempfile
-    import os
-    
+    """Points the `last` symlink at `checkpoint_dir`. Call from the main process only.
+
+    The new link is created under a temporary name and renamed over the old one (atomic), so `last` always
+    points at a complete checkpoint, even if the job is killed (e.g. preempted) during the update.
+    """
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    
-    # Use file locking to prevent race conditions in multi-GPU training
-    lock_file = checkpoint_dir.parent / ".symlink_lock"
-    
-    try:
-        with open(lock_file, 'w') as f:
-            # Get exclusive lock
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            
-            # Update symlink atomically
-            if last_checkpoint_dir.exists() or last_checkpoint_dir.is_symlink():
-                last_checkpoint_dir.unlink()
-            last_checkpoint_dir.symlink_to(relative_target)
-            
-    except (OSError, FileExistsError) as e:
-        # Handle race conditions gracefully - another process may have already updated
-        if not last_checkpoint_dir.exists():
-            try:
-                last_checkpoint_dir.symlink_to(relative_target)
-            except FileExistsError:
-                pass  # Another process created it, that's fine
-    finally:
-        # Clean up lock file
-        try:
-            lock_file.unlink()
-        except FileNotFoundError:
-            pass
+    tmp_link = checkpoint_dir.parent / f"{TMP_CHECKPOINT_PREFIX}{LAST_CHECKPOINT_LINK}"
+    if tmp_link.is_symlink() or tmp_link.exists():
+        tmp_link.unlink()
+    tmp_link.symlink_to(checkpoint_dir.relative_to(checkpoint_dir.parent))
+    os.replace(tmp_link, last_checkpoint_dir)
+    return last_checkpoint_dir
+
+
+def prune_checkpoints(checkpoints_dir: Path, keep_last: int, keep_every: int | None = None) -> list[Path]:
+    """Deletes step checkpoints except the newest `keep_last`, those at steps divisible by `keep_every` (if
+    set), and the one `last` points to. Also removes leftovers of interrupted saves and deletions.
+    Call from the main process only, after `update_last_checkpoint`.
+    """
+    if keep_last < 1:
+        raise ValueError(f"{keep_last=} must be at least 1.")
+    for leftover in checkpoints_dir.glob(f"{TMP_CHECKPOINT_PREFIX}*"):
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover)
+
+    step_dirs = sorted(
+        (p for p in checkpoints_dir.iterdir() if p.name.isdigit() and p.is_dir() and not p.is_symlink()),
+        key=lambda p: int(p.name),
+    )
+    last_link = checkpoints_dir / LAST_CHECKPOINT_LINK
+    last_target = last_link.resolve() if last_link.is_symlink() else None
+    removed = []
+    for step_dir in step_dirs[:-keep_last]:
+        if keep_every and int(step_dir.name) % keep_every == 0:
+            continue
+        if step_dir.resolve() == last_target:
+            continue
+        # Rename first so an interrupted deletion never leaves a partial directory under a step name.
+        trash = checkpoints_dir / f"{TMP_CHECKPOINT_PREFIX}delete_{step_dir.name}"
+        step_dir.rename(trash)
+        shutil.rmtree(trash)
+        removed.append(step_dir)
+    return removed
 
 
 def save_checkpoint(
@@ -123,11 +140,22 @@ def save_checkpoint(
         policy (PreTrainedPolicy): The policy to save.
         optimizer (Optimizer | None, optional): The optimizer to save the state from. Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
+
+    The checkpoint is written to a temporary directory and renamed to `checkpoint_dir` once complete, so a
+    job killed mid-save leaves only a `.tmp_*` directory (removed by `prune_checkpoints`). Call from the main
+    process only.
     """
-    pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+    tmp_dir = checkpoint_dir.parent / f"{TMP_CHECKPOINT_PREFIX}{checkpoint_dir.name}"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    pretrained_dir = tmp_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
-    save_training_state(checkpoint_dir, step, optimizer, scheduler)
+    save_training_state(tmp_dir, step, optimizer, scheduler)
+    if checkpoint_dir.exists():
+        # Only when re-saving a step, e.g. after resuming from an older checkpoint.
+        shutil.rmtree(checkpoint_dir)
+    tmp_dir.rename(checkpoint_dir)
 
 
 def save_training_state(

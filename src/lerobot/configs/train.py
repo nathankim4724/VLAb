@@ -66,6 +66,10 @@ class TrainPipelineConfig(HubMixin):
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
+    # Checkpoint pruning after each save. None keeps every checkpoint. Otherwise keeps the newest
+    # `keep_last_checkpoints` plus those at steps divisible by `keep_checkpoint_every` (if set).
+    keep_last_checkpoints: int | None = None
+    keep_checkpoint_every: int | None = None
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
@@ -156,6 +160,9 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
+
+        if self.keep_last_checkpoints is not None and self.keep_last_checkpoints < 1:
+            raise ValueError(f"{self.keep_last_checkpoints=} must be at least 1 (or None to keep all).")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
