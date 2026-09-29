@@ -285,8 +285,14 @@ def train(cfg: TrainPipelineConfig):
         "dataloading_s": AverageMeter("data_s", ":.3f"),
     }
 
+    # Samples per loop step across all processes, so logged samples/epochs count the global batch.
+    num_processes = accelerator.num_processes if accelerator else 1
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
+        cfg.batch_size * num_processes,
+        dataset.num_frames,
+        dataset.num_episodes,
+        train_metrics,
+        initial_step=step,
     )
 
     logging.info("Start offline training on a fixed dataset")
