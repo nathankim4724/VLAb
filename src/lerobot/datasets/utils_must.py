@@ -172,13 +172,18 @@ def create_padded_features(item: dict, features: dict = {}):
             shape = (shape[2], shape[0], shape[1])
         if len(shape) == 1 and shape[0] == 1:  # ft with shape are actually tensor(ele)
             shape = []
+        dtype = str_to_torch_dtype(ft["dtype"])
         if key not in item:
-            dtype = str_to_torch_dtype(ft["dtype"])
             item[key] = torch.zeros(shape, dtype=dtype)
             item[f"{key}_padding_mask"] = torch.tensor(0, dtype=torch.int64)
             if "image" in key:  # FIXME(mshukor): support other observations
                 item[f"{key}_is_pad"] = torch.BoolTensor([False])
         else:
+            # Some datasets store a column with another dtype than their info.json declares (`grid_position`:
+            # int64 data declared as float32). The collate stacks into the first sample's dtype, so a batch
+            # starting with such a sample, followed by float32 padding from other datasets, crashed.
+            if isinstance(item[key], torch.Tensor) and item[key].dtype != dtype:
+                item[key] = item[key].to(dtype)
             item[f"{key}_padding_mask"] = torch.tensor(1, dtype=torch.int64)
     return item
 
