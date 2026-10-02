@@ -24,6 +24,12 @@
 #   RUN_NAME=smoke4_003 DATASETS=smoke STEPS=300 SAVE_FREQ=100 LOG_FREQ=20 \
 #     sbatch --account=csail --partition=csail-shared-h200 --qos=lab-free --time=02:00:00 \
 #     examples/scripts/pretrain_paper_4gpu.sbatch
+# Full run on 1 GPU (urops QoS, 1 GPU max): 4 accumulated batches of 64 = the same global batch 256. Under
+# accumulation every step-based setting counts batches of 64, not optimizer updates, so each is 4x:
+#   RUN_NAME=paper_base_1gpu_001 GRAD_ACCUM=4 STEPS=800000 WARMUP_STEPS=400 DECAY_STEPS=800000 \
+#     SAVE_FREQ=4000 KEEP_EVERY=80000 LOG_FREQ=400 \
+#     sbatch --qos=vision-pulkitag-urops --gres=gpu:1 --cpus-per-task=20 --mem=256G \
+#     examples/scripts/pretrain_paper_4gpu.sbatch
 #
 #SBATCH --job-name=smolvla_pretrain
 #SBATCH --account=vision-pulkitag-urops
@@ -48,6 +54,7 @@ STEPS=${STEPS:-200000}
 WARMUP_STEPS=${WARMUP_STEPS:-100}
 DECAY_STEPS=${DECAY_STEPS:-200000}
 BATCH_SIZE=${BATCH_SIZE:-64}       # per GPU
+GRAD_ACCUM=${GRAD_ACCUM:-1}        # batches accumulated per optimizer update (4 on 1 GPU)
 SAVE_FREQ=${SAVE_FREQ:-2000}
 KEEP_LAST=${KEEP_LAST:-3}          # newest checkpoints kept ...
 KEEP_EVERY=${KEEP_EVERY:-20000}    # ... plus every KEEP_EVERY steps
@@ -136,7 +143,7 @@ else
     smoke) REPO_IDS=community_dataset_v1/Beegbrain/pick_lemon_and_drop_in_bowl,community_dataset_v1/Chojins/chess_game_000_white_red ;;
     *) log "ERROR: DATASETS must be 'all' or 'smoke', got '$DATASETS'"; exit 1 ;;
   esac
-  log "fresh start: DATASETS=$DATASETS steps=$STEPS warmup=$WARMUP_STEPS decay=$DECAY_STEPS batch/gpu=$BATCH_SIZE"
+  log "fresh start: DATASETS=$DATASETS steps=$STEPS warmup=$WARMUP_STEPS decay=$DECAY_STEPS batch/gpu=$BATCH_SIZE accumulation=$GRAD_ACCUM"
   TRAIN_ARGS=(
     --dataset.repo_id="$REPO_IDS"
     --dataset.root=/data/scratch/nkim4724/datasets
@@ -151,7 +158,7 @@ else
     --policy.max_action_dim=32 --policy.max_state_dim=32
     --policy.optimizer_lr=1e-4 --policy.scheduler_warmup_steps="$WARMUP_STEPS"
     --policy.scheduler_decay_steps="$DECAY_STEPS" --policy.scheduler_decay_lr=2.5e-6
-    --batch_size="$BATCH_SIZE" --gradient_accumulation_steps=1 --steps="$STEPS"
+    --batch_size="$BATCH_SIZE" --gradient_accumulation_steps="$GRAD_ACCUM" --steps="$STEPS"
     --log_freq="$LOG_FREQ" --save_freq="$SAVE_FREQ"
     --keep_last_checkpoints="$KEEP_LAST" --keep_checkpoint_every="$KEEP_EVERY"
     --num_workers="$NUM_WORKERS"
@@ -170,10 +177,15 @@ trap requeue_before_time_limit USR1
 
 # ---- Train ----------------------------------------------------------------------------------------------
 NUM_GPUS=${SLURM_GPUS_ON_NODE:-4}
-log "launching $NUM_GPUS processes, global batch $((NUM_GPUS * BATCH_SIZE))"
-# Port derived from the job ID so two jobs on the same node don't collide on accelerate's default 29500.
-accelerate launch --config_file accelerate_configs/multi_gpu.yaml --num_processes="$NUM_GPUS" \
-  --main_process_port=$((20000 + SLURM_JOB_ID % 20000)) --mixed_precision bf16 \
+log "launching $NUM_GPUS processes, batch/gpu $BATCH_SIZE (a resume keeps the checkpoint's batch size and accumulation)"
+if [[ $NUM_GPUS == 1 ]]; then
+  LAUNCH_ARGS=(--config_file accelerate_configs/single_gpu.yaml)
+else
+  # Port derived from the job ID so two jobs on the same node don't collide on accelerate's default 29500.
+  LAUNCH_ARGS=(--config_file accelerate_configs/multi_gpu.yaml --num_processes="$NUM_GPUS"
+    --main_process_port=$((20000 + SLURM_JOB_ID % 20000)))
+fi
+accelerate launch "${LAUNCH_ARGS[@]}" --mixed_precision bf16 \
   src/lerobot/scripts/train.py "${TRAIN_ARGS[@]}" &
 TRAIN_PID=$!
 # `wait` returns early when the USR1 trap fires; keep waiting until training exits or Slurm kills the job.
